@@ -1,0 +1,421 @@
+openQA installation guide
+=========================
+:author: openSUSE Team at SUSE
+:toc:
+
+Introduction
+------------
+[id="intro"]
+
+openQA is an automated test tool that makes it possible to test the whole
+installation process of an operating system. It's free software released
+under the http://www.gnu.org/licenses/gpl-2.0.html[GPLv2 license]. The
+source code and documentation are hosted in the
+https://github.com/os-autoinst[os-autoinst organization on GitHub].
+
+This document provides the information needed to install and setup the tool, as
+well as information useful for everyday administration of the system. It's
+assumed that the reader is already familiar with openQA and has already read the
+Starter Guide, available at the 
+https://github.com/os-autoinst/openQA[official repository].
+
+Installation
+------------
+[id="installation"]
+
+The easiest way to install openQA is from packages. You can find them in OBS in
+the https://build.opensuse.org/project/show/devel:openQA[openQA] repository or
+the latest development version can also be found in OBS in the
+https://build.opensuse.org/project/show/devel:openQA[openQA:devel]
+repository. Installation on openSUSE is therefore pretty simple:
+
+[source,sh]
+--------------------------------------------------------------------------------
+zypper ar -f obs://devel:openQA/openSUSE_13.2 openQA
+# needed for distros that lack some packages from Tumbleweed
+zypper ar -f obs://devel:openQA:13.2/openSUSE_13.2 openQA-perl-modules
+zypper in openQA
+--------------------------------------------------------------------------------
+
+Basic configuration
+-------------------
+[id="basic"]
+
+Apache proxy
+~~~~~~~~~~~~
+
+It's recommended to run openQA behind an apache proxy. See the
++openqa.conf.template+ config file in +/etc/apache2/vhosts.d+. To make
+everything work correctly, you need to enable the 'headers', 'proxy',
+'proxy_http' and 'proxy_wstunnel' modules using 'a2enmod'.
+
+SSL
+~~~
+
+By default openQA expects to be run with HTTPS. If you don't have an
+SSL certificate for your host you need to turn HTTPS off. You can do
+that in +/etc/openqa/openqa.ini+:
+
+[source,ini]
+--------------------------------------------------------------------------------
+[openid]
+httpsonly = 0
+--------------------------------------------------------------------------------
+
+Run the web UI
+~~~~~~~~~~~~~~
+[source,sh]
+--------------------------------------------------------------------------------
+systemctl start openqa-webui
+systemctl restart apache2
+--------------------------------------------------------------------------------
+
+The openQA web UI should be available on http://localhost/ now.
+
+Run workers
+~~~~~~~~~~~
+
+Workers are processes running virtual machines to perform the actual
+testing. They are distributed as a separate package and can be installed on
+multiple machines but still using only one WebUI.
+
+[source,sh]
+--------------------------------------------------------------------------------
+zypper in openQA-worker
+--------------------------------------------------------------------------------
+
+To allow workers to access your instance, you need to log into
+openQA as operator and create a pair of API key and secret. Once you
+are logged in, follow the link 'manage API keys' in the top right
+corner. Click the 'create' button to generate +key+ and +secret+.
+Copy&Paste them into +/etc/openqa/client.conf+ on machine where openQA-worker
+is installed. Make sure to put in a section reflecting your webserver URL.
+In the simplemost case, your +client.conf+ may look like this:
+
+[source,ini]
+--------------------------------------------------------------------------------
+[localhost]
+key = 0123456789ABCDEF
+secret = 0123456789ABCDEF
+--------------------------------------------------------------------------------
+
+To start the workers you can use the provided systemd files via +systemctl
+start openqa-worker@1+. This will start worker number one. You can start as
+many workers as you dare, you just need to supply different 'worker id' (number
+after @).
+
+You can also run workers manually from command line.
+
+[source,sh]
+--------------------------------------------------------------------------------
+sudo -u _openqa-worker /usr/share/openqa/script/worker --instance X
+--------------------------------------------------------------------------------
+
+This will run a worker manually showing you debug output. If you haven't
+installed 'os-autoinst' from packages make sure to pass +--isotovideo+ option
+to point to the checkout dir where isotovideo is, not to +/usr/lib+! Otherwise
+it will have trouble finding its perl modules.
+
+Advanced configuration
+----------------------
+[id="advanced"]
+
+
+User authentication
+~~~~~~~~~~~~~~~~~~~
+
+OpenQA supports three different authentication methods - OpenID (default), iChain
+and Fake. See +auth+ section in +/etc/openqa/openqa.ini+.
+
+[source,ini]
+--------------------------------------------------------------------------------
+[auth]
+# method name is case sensitive!
+method = OpenID|iChain|Fake
+--------------------------------------------------------------------------------
+
+Independently of method used, the first user that logs in (if there is no admin yet)
+will automatically get administrator rights!
+
+OpenID
+~~~~~~
+By default openQA uses OpenID with opensuse.org as OpenID provider.
+OpenID method has its own +openid+ section in +/etc/openqa/openqa.ini+:
+
+[source,ini]
+--------------------------------------------------------------------------------
+[openid]
+## base url for openid provider
+provider = https://www.opensuse.org/openid/user/
+## enforce redirect back to https
+httpsonly = 1
+--------------------------------------------------------------------------------
+
+OpenQA supports only OpenID version up to 2.0. Newer OpenID-Connect and OAuth is
+not supported currently.
+
+iChain
+~~~~~~
+Use only if you use iChain (NetIQ Access Manager) proxy on your hosting server.
+
+Fake
+~~~~
+For development purposes only! Fake authentication bypass any authentication and
+automatically allow any login requests as 'Demo user' with administrator privileges
+and without password. To ease worker testing, API key and secret is created (or updated)
+with validity of one day during login.
+You can then use following as +/etc/openqa/client.conf+:
+
+[source,ini]
+--------------------------------------------------------------------------------
+[localhost]
+key = 1234567890ABCDEF
+secret = 1234567890ABCDEF
+--------------------------------------------------------------------------------
+
+If you switch authentication method from Fake to any other, review your API keys!
+You may be vulnerable for up to a day until Fake API key expires.
+
+Setting up git support
+~~~~~~~~~~~~~~~~~~~~~~
+
+Editing needles from web can optionally commit new or changed needles
+automatically to git. To do so, you need to enable git support by setting
+
+[source,ini]
+--------------------------------------------------------------------------------
+[global]
+scm = git
+--------------------------------------------------------------------------------
+in +/etc/openqa/openqa.ini+. Once you do so and restart the web interface, openQA will
+automatically commit new needles to the git repository.
+
+You may want to add some description to automatic commits coming
+from the web UI.
+You can do so by setting your configuration in the repository
+(+/var/lib/os-autoinst/needles/.git/config+) to some reasonable defaults such as:
+
+--------------------------------------------------------------------------------
+[user]
+	email = whatever@example.com
+	name = openQA web UI
+--------------------------------------------------------------------------------
+
+To enable automatic pushing of the repo as well, you need to add the following
+to your openqa.ini:
+
+[source,ini]
+--------------------------------------------------------------------------------
+[scm git]
+do_push = yes
+--------------------------------------------------------------------------------
+Depending on your setup, you might need to generate and propagate
+ssh keys for user 'geekotest' to be able to push.
+
+Worker settings
+~~~~~~~~~~~~~~~
+
+Default behaviour for all workers is to use the 'Qemu' backend and connect to
+'http://localhost'. If you want to change some of those options, you can do so
+in +/etc/openqa/workers.ini+. For example to point the workers to the FQDN of
+your host (needed if test cases need to access files of the host) use the
+following setting:
+
+[source,ini]
+--------------------------------------------------------------------------------
+[global]
+HOST = http://openqa.example.com
+--------------------------------------------------------------------------------
+
+Once you got workers running they should show up in the admin section of openQA in
+the workers section as 'idle'. When you get so far, you have your own instance
+of openQA up and running and all that is left is to set up some tests.
+
+Configuring remote workers
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+There are some additional requirements to get remote worker running. First is to
+ensure shared storage between openQA WebUI and workers.
+Directory +/var/lib/openqa/share+ contains all required data and should be
+shared with read-write access across all nodes present in openQA cluster.
+This step is intentionally left on system administrator to choose proper shared
+storage for her specific needs.
+
+Example of NFS configuration:
+NFS server is where openQA WebUI is running. Content of +/etc/exports+
+[source]
+--------------------------------------------------------------------------------
+/var/lib/openqa/share *(fsid=0,rw,no_root_squash,sync,no_subtree_check)
+--------------------------------------------------------------------------------
+
+NFS clients are where openQA workers are running. Run following command:
+[source, sh]
+--------------------------------------------------------------------------------
+mount -t nfs openQA-webUI-host:/var/lib/openqa/share /var/lib/openqa/share
+--------------------------------------------------------------------------------
+
+Filesystem Layout
+-----------------
+[id="filesystem"]
+
+The openQA web interface can be started via +MOJO_REVERSE_PROXY=1 morbo script/openqa+ in
+development mode.
+
++/var/lib/openqa/+ must be owned by root and contain several sub
+directories owned by the user that runs openqa (default 'geekotest'):
+
+* +cache+ (cache directory, needs to be owned by the user who runs openqa)
+* +factory/iso+
+* +share+ (shared directories for remote workers)
+* +testresults+
+* +tools+ (symlink to +/usr/share/openqa/tools/+)
+* +db+ contains the sqlite database
+
+To initially create the database, you need to run +script/initdb+.
+
+The worker needs to own +/var/lib/openqa/pool/$INSTANCE+, e.g.
+* +/var/lib/openqa/pool/1+
+* +/var/lib/openqa/pool/2+
+* .... - add more if you have more CPUs/disks
+
+You can also give the whole pool directory to the +_openqa-worker+ user and let
+the workers create their own instance directories.
+
+Changing the database engine
+----------------------------
+[id="dbengine"]
+
+openQA is compatible with several database engines and comes with all the needed
+tools to initialize a clean database in any of them. But openQA does not
+include tools to migrate the existing data from a database to another. If you
+are planning, for example, to leave behind SQLite and switch to PostgreSQL in
+your openQA installation, you will need to start with a clean database or
+perform the data conversion by yourself.
+
+Converting databases from one engine to another is far from trivial. There are
+plenty of tools, both commercial and free, that try to address the problem for
+different databases and in different ways. The following example SQL scritps are
+provided just as a starting point for those willing to migrate from SQLite (the
+default engine) to PostgreSQL (successfully backing the biggest openQA
+installations at the time of writing). Keep in mind that the scripts will
+probably need some previous work, since they are based on the version 22 of the
+database schema (likely outdated at the time of reading).
+
+First, run this in the SQLite database to dump the database content into a bunch
+of CSV files.
+[source,sql]
+--------------------------------------------------------------------------------
+.mode csv
+.header ON
+.output assets.csv
+SELECT * FROM assets;
+.output job_settings.csv
+SELECT * FROM job_settings;
+.output machine_settings.csv
+SELECT * FROM machine_settings;
+.output machines.csv
+SELECT * FROM machines;
+.output product_settings.csv
+SELECT * FROM product_settings;
+.output products.csv
+SELECT * FROM products;
+.output secrets.csv
+SELECT * FROM secrets;
+.output test_suite_settings.csv
+SELECT * FROM test_suite_settings;
+.output test_suites.csv
+SELECT * FROM test_suites;
+.output users.csv
+SELECT * FROM users;
+.output worker_properties.csv
+SELECT * FROM worker_properties;
+.output workers.csv
+SELECT * FROM workers WHERE id > 0;
+.output api_keys.csv
+SELECT * FROM api_keys;
+.output job_modules.csv
+SELECT * FROM job_modules;
+.output job_templates.csv
+SELECT * FROM job_templates;
+.output jobs.csv
+SELECT * FROM jobs;
+.output job_dependencies.csv
+SELECT * FROM job_dependencies;
+.output jobs_assets.csv
+SELECT * FROM jobs_assets;     
+--------------------------------------------------------------------------------
+
+Then, initialize the PostgreSQL database using the standard procedure and
+afterwards run this script from the directory containing the CSV files to import
+them into the new database.
+
+[source,sql]
+---------------------------------------------------------------------------------------
+\copy users FROM users.csv WITH csv header NULL AS ''
+\copy api_keys FROM api_keys.csv WITH csv header NULL AS ''
+\copy secrets FROM secrets.csv WITH csv header NULL AS ''
+\copy assets FROM assets.csv WITH csv header NULL AS ''
+\copy workers FROM workers.csv WITH csv header NULL AS ''
+\copy worker_properties FROM worker_properties.csv WITH csv header NULL AS ''
+\copy products FROM products.csv WITH csv header NULL AS ''
+\copy product_settings FROM product_settings.csv WITH csv header NULL AS ''
+\copy machines FROM machines.csv WITH csv header NULL AS ''
+\copy machine_settings FROM machine_settings.csv WITH csv header NULL AS ''
+\copy test_suites FROM test_suites.csv WITH csv header NULL AS ''
+\copy test_suite_settings FROM test_suite_settings.csv WITH csv header NULL AS ''
+\copy job_templates FROM job_templates.csv WITH csv header NULL AS ''
+\copy jobs FROM jobs.csv WITH csv header NULL AS ''
+\copy job_settings FROM job_settings.csv WITH csv header NULL AS ''
+\copy job_modules FROM job_modules.csv WITH csv header NULL AS ''
+\copy job_dependencies FROM job_dependencies.csv WITH csv header NULL AS ''
+\copy jobs_assets FROM jobs_assets.csv WITH csv header NULL AS ''
+SELECT SETVAL('users_id_seq', (SELECT MAX(id) FROM users));
+SELECT SETVAL('api_keys_id_seq', (SELECT MAX(id) FROM api_keys));
+SELECT SETVAL('secrets_id_seq', (SELECT MAX(id) FROM secrets));
+SELECT SETVAL('assets_id_seq', (SELECT MAX(id) FROM assets));
+SELECT SETVAL('workers_id_seq', (SELECT MAX(id) FROM workers));
+SELECT SETVAL('worker_properties_id_seq', (SELECT MAX(id) FROM worker_properties));
+SELECT SETVAL('products_id_seq', (SELECT MAX(id) FROM products));
+SELECT SETVAL('product_settings_id_seq', (SELECT MAX(id) FROM product_settings));
+SELECT SETVAL('machines_id_seq', (SELECT MAX(id) FROM machines));
+SELECT SETVAL('machine_settings_id_seq', (SELECT MAX(id) FROM machine_settings));
+SELECT SETVAL('test_suites_id_seq', (SELECT MAX(id) FROM test_suites));
+SELECT SETVAL('test_suite_settings_id_seq', (SELECT MAX(id) FROM test_suite_settings));
+SELECT SETVAL('job_templates_id_seq', (SELECT MAX(id) FROM job_templates));
+SELECT SETVAL('jobs_id_seq', (SELECT MAX(id) FROM jobs));
+SELECT SETVAL('job_settings_id_seq', (SELECT MAX(id) FROM job_settings));
+SELECT SETVAL('job_modules_id_seq', (SELECT MAX(id) FROM job_modules));
+---------------------------------------------------------------------------------------
+
+Troubleshooting
+---------------
+[id="troubleshooting"]
+
+Tests fail quickly
+~~~~~~~~~~~~~~~~~~
+
+Check the log files in +/var/lib/openqa/testresults+
+
+KVM doesn't work
+~~~~~~~~~~~~~~~~
+
+* make sure you have a machine with kvm support
+* make sure +kvm_intel+ or +kvm_amd+ modules are loaded
+* make sure you do have virtualization enabled in BIOS
+* make sure the '_openqa-worker' user can access +/dev/kvm+
+* make sure you are not already running other hypervisors such as VirtualBox
+* when running inside a vm make sure nested virtualization is enabled (pass nested=1 to your kvm module)
+
+openid login times out
+~~~~~~~~~~~~~~~~~~~~~~
+
+www.opensuse.org's openid provider may have trouble with IPv6. openQA shows a message like this:
+
+  no_identity_server: Could not determine ID provider from URL.
+
+To avoid that switch off IPv6 or add a special route that prevents the system
+from trying to use IPv6 with www.opensuse.org:
+
+--------------------------------------------------------------------------------
+ip -6 r a to unreachable 2620:113:8044:66:130:57:66:6/128
+--------------------------------------------------------------------------------
