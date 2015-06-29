@@ -1,0 +1,410 @@
+openQA tests developer guide
+============================
+:author: openSUSE Team at SUSE
+:toc:
+
+Introduction
+------------
+[id="intro"]
+
+openQA is an automated test tool that makes it possible to test the whole
+installation process of an operating system. It's free software released
+under the http://www.gnu.org/licenses/gpl-2.0.html[GPLv2 license]. The
+source code and documentation are hosted in the
+https://github.com/os-autoinst[os-autoinst organization on GitHub].
+
+This document provides the information needed to start developing new tests for
+openQA or to improve the existing ones. It's
+assumed that the reader is already familiar with openQA and has already read the
+Starter Guide, available at the 
+https://github.com/os-autoinst/openQA[official repository].
+
+Basic
+-----
+[id="basic"]
+
+This section explains the basic layout of openQA tests and the API available in tests.
+openQA tests are written in the *Perl* programming language. Some basic but no
+in-depth knowledge of Perl is needed. This document assumes that the reader
+is already familiar with Perl.
+
+API
+~~~
+
+https://github.com/os-autoinst/os-autoinst[os-autoinst] provides the
+API for the tests. The most commonly used functions are:
+
+* +get_var NAME+ Returns the content of a variable or undef
+* +check_var NAME, CONTENT+ Check content of a variable, treating undef as empty.
+* +send_key KEY[, WAITIDLE]+ Send key to openQA instance. Call +wait_idle+ at the end if WAITIDLE is set. (e.g. +send_key "alt-o", 1+)
+* +type_string STRING+ Typing the given string. (e.g. +type_string "yes\n"+)
+* +save_screenshot+ Capture and save a screenshot in the test results.
+* +check_screen NEEDLE[, TIMEOUT]+ Wait until NEEDLE is seen on the screen. Return undef if not found within TIMEOUT (default 30s).
+* +assert_screen NEEDLE[, TIMEOUT]+ Wait until NEEDLE is seen on the screen. Abort test and mark as failed if not found within TIMEOUT (default 30s).
+* +record_soft_failure+ Record a workaround applied in the test.
+* +wait_idle TIMEOUT+  Wait for max TIMEOUT seconds until system is idle.
+* +wait_serial REGEX[, TIMEOUT]+ Wait until REGEX is seen on serial port. Return 0 if not found after TIMEOUT (default 90s)
+* +upload_logs FILE+ Type in necessary shell commands to save FILE in the test results
+* +assert_and_click NEEDLE[, BUTTON]+ Wait until NEEDLE is seen on the screen and click it in the middle of the smallest defined area
+* +wait_still_screen [TIME]+ Wait for the screen to stop changing for TIME seconds
+* +mouse_hide+ Moves the mouse cursor into the edge of the screen to hide it within needles
+* +script_output SCRIPT[, TIMEOUT]+ Returns the text output of the given bash script. The script is called with bash -xe and STDOUT is returned
+* +validate_script_output SCRIPT, CODE+ Checks the text output of the bash script using the given callback (e.g. +validate_script_output "ls -la $HOME", sub { m/.xsession-errors/ }+)
+
+The following API is distribution specific and subject to change
+
+* +ensure_installed PACKAGES...+ Check that the specific application was installed in the system, if not then it will try to install it from download repositories.
+* +x11_start_program NAME+ Execute the graphical application NAME. How exactly depends on the desktop environment.
+* +become_root+ Become root (in a shell)
+* +script_run COMMAND[, TIMEOUT]+ Wrapper for type_string meant to type in shell commands. Waits TIMEOUT until idle (default 9s)
+* +script_sudo COMMAND+ Use sudo to execute COMMAND, handling the optional password prompt.
+* +type_password+ Type default password (used for root and user)
+
+How to write tests
+~~~~~~~~~~~~~~~~~~
+
+openQA tests need to implement at least the *run* subroutine to
+contain the actual test code and the test needs to be loaded in the distribution's
+main.pm.
+
+The *test_flags* subroutine specifies what happens when the test
+fails.
+
+There are several callbacks defined:
+
+* *post_fail_hook* is called to upload log files or determine the state of
+  the machine
+* *pre_run_hook* is called before the run function - mainly useful for a whole
+  group of tests
+* *post_run_hook* is run after successful run function - mainly useful for a whole
+  group of tests
+
+The following example is a basic test that assumes some live image
+that boots into the desktop when pressing enter at the boot loader:
+
+[source,perl]
+-------------------------------------------------------------------
+use base "basetest";
+use strict;
+use testapi; 
+
+sub run {
+    # wait for bootloader to appear
+    assert_screen "bootloader", 30; # timeout 30 seconds
+
+    # press enter to boot right away
+    send_key "ret";
+
+    # wait for the desktop to appear
+    assert_screen "desktop", 300;
+}
+
+sub test_flags {
+    # without anything - rollback to 'lastgood' snapshot if failed
+    # 'fatal' - abort whole test suite if this fails (and set overall state)
+    # 'milestone' - after this test succeeds, update 'lastgood'
+    # 'important' - if this fails, set the overall state to 'failed'
+    return { important => 1 };
+}
+
+1;
+-------------------------------------------------------------------
+
+Test Case Examples
+~~~~~~~~~~~~~~~~~~
+
+* Console test that installs software from remote repository via zypper command
+
+[source,perl]
+----------------------------------------------------------------------------------------------------------
+sub run() {
+
+    # change to root
+    become_root;
+
+    # output zypper repos to the serial
+    script_run "zypper lr -d > /dev/$serialdev";
+
+    # install xdelta and insert a string 'xdelta_installed' to the serial
+    script_run "zypper --gpg-auto-import-keys -n in xdelta && echo 'xdelta_installed' > /dev/$serialdev";
+
+    # detecting whether 'xdelta_installed' appears in the serial within 200 seconds
+    die "zypper install failed" unless wait_serial"xdelta_installed", 200;
+
+    # capture a screenshot and compare with needle 'test-zypper_in-1'
+    assert_screen 'test-zypper_in-1', 3;
+}
+----------------------------------------------------------------------------------------------------------
+
+* Typical X11 test testing kate
+
+[source,perl]
+--------------------------------------------------------------
+sub run() {
+
+    # make sure kate was installed
+    # if not ensure_installed will try to install it
+    ensure_installed "kate";
+
+    # start kate
+    x11_start_program "kate";
+
+    # check that kate execution succeeded
+    assert_screen 'test-kate-1', 10; 
+
+    # close kate's welcome window and wait for system becoming idle
+    send_key 'alt-c', 1;
+
+    # typing the string on kate
+    type_string "If you can see this text kate is working.\n";
+
+    # check the result
+    assert_screen 'test-kate-2', 5;
+
+    # quit kate
+    send_key "ctrl-q";
+
+    # make sure kate was closed
+    assert_screen 'test-kate-3', 5;
+}
+--------------------------------------------------------------
+
+Variables
+~~~~~~~~~
+
+Test case behavior can be controlled via variables. Some basic
+variables like +DISTRI+, +VERSION+, +ARCH+ are always set.
+Others like +DESKTOP+ are defined by the 'Test suites' in the openQA
+web UI.
+Check the existing tests at
+https://github.com/os-autoinst/os-autoinst-distri-opensuse[os-autoinst-distri-opensuse
+on GitHub] for examples.
+
+Variables are accessible via the *get_var* and *check_var* functions.
+
+Modifying setting of an existing test
+-------------------------------------
+
+There is no interface to modify existing tests but the clone script
+can be used to create a new job that adds, removes or changes
+settings:
+
+[source,sh]
+--------------------------------------------------------------------------------
+/usr/share/openqa/script/clone_job.pl --from localhost --host localhost 42 FOO=bar BAZ=
+--------------------------------------------------------------------------------
+
+Using Snapshots to speed up development of tests
+------------------------------------------------
+[id="snapshots"]
+
+Sometimes it's annoying to run the full installation to adjust some
+test. It would be nice to have the VM jump to a certain point. There
+is an experimental hidden feature that allows to start from a
+snapshot that might help in that situation:
+
+1. run the worker with --no-cleanup parameter. This will preserve the hard
+disks after test runs.
+
+2. set MAKETESTSNAPSHOTS=1 on a job. This will make openQA save a
+snapshot for every test run. One way to do that is by cloning an
+existing job and adding the setting:
+
+$ /usr/share/openqa/script/clone_job.pl --from https://openqa.opensuse.org  --host localhost 24 MAKETESTSNAPSHOTS=1
+
+3. create a job again, this time setting the SKIPTO variable to the snapshot
+you need. Again, clone_job.pl comes handy here:
+
+$ /usr/share/openqa/script/clone_job.pl --from https://openqa.opensuse.org  --host localhost 24 SKIPTO=consoletest-yast2_i
+
+Use qemu-img snapshot -l something.img to find out what snapshots
+are in the image.
+
+Assigning jobs to workers
+-------------------------
+
+By default, any worker can get any job with the matching architecture.
+
+This behavior can be changged by setting job variable WORKER_CLASS. Jobs
+with this variable set (typically via machines or test suites configuration) are
+assigned only to workers, which have the same variable in the configuration file.
+
+For example, the following configuration ensures, that jobs with WORKER_CLASS=desktop
+can be assigned _only_ to worker instances 1 and 2.
+
+[workers.ini]
+--------------------------------------------------------------------------------
+[1]
+WORKER_CLASS = desktop
+
+[2]
+WORKER_CLASS = desktop
+
+[3]
+# WORKER_CLASS is not set
+--------------------------------------------------------------------------------
+
+Writing multi-machine tests
+---------------------------
+[id="mm-tests"]
+
+Scenarios requiring more than one system under test (SUT), like High Availability testing, are covered as multi-machine tests (MM tests) in this section.
+
+OpenQA approaches multi-machine testing by assigning dependencies between individual jobs. This means the following:
+
+* _everything needed for MM tests must be running as a test job_ (or you are on your own), even support infrastructure (custom DHCP, NFS,
+etc. if required), which in principle is not part of the actual testing, must have a defined test suite so a test job can be created
+* OpenQA scheduler makes sure _tests are started as a group_ and in right order, _cancelled as a group_ if some dependencies are violated and _cloned as
+a group_ if requested.
+* OpenQA _does not synchronize_ individual steps of the tests.
+* OpenQA provides _locking server for basic synchronization_ of tests (e.g. wait until services are ready for failover), but the _correct usage of locks is 
+test designer job_ (beware deadlocks).
+
+In short, writing multi-machine tests adds a few more layers of complexity:
+
+1. documenting the dependencies and order between individual tests
+2. synchronization between individual tests
+3. actual technical realization (i.e. link:Networking.asciidoc[custom networking])
+
+Job dependencies
+~~~~~~~~~~~~~~~~
+
+There are 2 types of dependencies: +CHAINED+ and +PARALLEL+:
+
+* +CHAINED+ describes when one test case depends on another and both are run sequentially, i.e. KDE test suite is run after and only after Installation test suite
+is successfully finished and cancelled if fail.
+
+To define +CHAINED+ dependency add variable +START_AFTER_TEST+ with the name(s) of test suite(s) after which selected test suite is supposed to run.
+Use comma separated list for multiple test suite dependency.
+
+* +PARALLEL+ describes MM test, test suites are scheduled to run at the same time and managed as a group. On top of that, +PARALLEL+ also describes
+test suites dependencies, where some test suites (children) run parallel with other test suites (parents) only when parents are running.
+
+To define +PARALLEL+ dependency, use +PARALLEL_WITH+ variable with the name(s) of test suite(s) which acts as a parent suite(s) to selected test suite.
+In other words, +PARALLEL_WITH+ describes "I need this test suite to be running during my run". Use comma separated list for multiple test suite dependency.
+Keep in mind that parent job _must be running until all children finish_, else scheduler will cancel child jobs once parent is done.
+
+OpenQA worker requirements
+^^^^^^^^^^^^^^^^^^^^^^^^^^
++CHAINED+ dependency requires only one worker, since dependent jobs will run only after the first one finish.
+On the other hand +PARALLEL+ dependency requires at _least 2 workers_ for simple scenarios.
+
+Examples:
+^^^^^^^^^
+
+.+CHAINED+ - i.e. test basic functionality before going advanced - requires 1 worker
+----
+A <- B <- C
+
+Define test suite A,
+then define B with variable START_AFTER_TEST=A and then define C with START_AFTER_TEST=B
+
+-or-
+
+Define test suite A, B
+and then define C with START_AFTER_TEST=A,B
+In this case however the start order of A and B is not specified.
+But C will start only after A, B are successfully done.
+----
+.+PARALLEL+ basic High-Availability
+----
+A
+^
+B
+
+Define test suite A
+and then define B with variable PARALLEL_WITH=A.
+A in this case is parent test suite to B and must be running throughout B run.
+----
+.+PARALLEL+ with multiple parents - i.e. complex support requirements for one test - requires 4 workers
+----
+A B C
+\ | /
+  ^
+  D
+
+Define test suites A,B,C
+and then define D with PARALLEL_WITH=A,B,C.
+A,B,C run in parallel and are parent test suites for D and all must run until D finish.
+----
+.+PARALLEL+ with one parent - i.e. running independent tests against one server - requires at least 2 workers
+----
+   A
+   ^
+  /|\
+ B C D
+
+Define test suite A
+and then define B,C,D with PARALLEL_WITH=A
+A is parent test suite for B, C, D (all can run in parallel).
+Children B, C, D can run and finish anytime, but A must run until all B, C, D finishes.
+----
+Test synchronization and locking API
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+OpenQA provides locking server through lock API. To use lock API import +lockapi+ package (_use lockapi;_) in your test file.
+Lock API provides three functions: +mutex_create+, +mutex_lock+, +mutex_unlock+. Each of these functions take one parameter: name of the lock.
+Locks are associated with caller`s job - locks can't be unlocked by different job then the one who locked the lock.
+
++mutex_lock+ tries to lock the mutex lock for caller`s job. If lock is unavailable or locked by someone else, +mutex_lock+ call blocks.
+
++mutex_unlock+ tries to unlock the mutex lock. If lock is locked by different job, +mutex_unlock+ call blocks. When lock become available, call
+returns without doing anything.
+
++mutex_create+ create new mutex lock. By default, when mutex lock does not exist it is considered locked. When lock is created by +mutex_create+,
+ lock is automatically unlocked. When mutex lock already exists call returns without doing anything.
+
+Locks are addressed by _their name_. This name is _valid in test group_ defined by their dependencies. If there are more groups running at the
+same time and the same lock name is used, these locks are independent of each other.
+
+Example:
+^^^^^^^^
+
+parent job - wait until login prompt appear, assume services are started
+[source,perl]
+--------------------------------------------------------------------------------
+use base "basetest";
+use strict;
+use testapi;
+use lockapi;
+
+sub run {
+    # wait for bootloader to appear
+    assert_screen "bootloader", 30; # timeout 30 seconds
+
+    # wait for the login to appear
+    assert_screen "login", 300;
+
+    # services start automatically
+    # unlock by creating the lock
+    mutex_create('services_ready');
+
+    # TODO: create API for children check
+    sleep 3000;
+}
+--------------------------------------------------------------------------------
+
+child job - check until parent is ready, then start testing services
+[source,perl]
+--------------------------------------------------------------------------------
+use base "basetest";
+use strict;
+use testapi;
+use lockapi;
+
+sub run {
+    # wait for bootloader to appear
+    assert_screen "bootloader", 30; # timeout 30 seconds
+
+    # wait for the login to appear
+    assert_screen "login", 300;
+
+    # this blocks until lock is available and then does nothing
+    mutex_unlock('services_ready');
+
+    # login to continue
+    type_string("root\n");
+    sleep 1;
+    type_string("secret\n");
+}
+--------------------------------------------------------------------------------
