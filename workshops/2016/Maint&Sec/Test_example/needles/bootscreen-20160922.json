@@ -1,0 +1,15 @@
+{
+  "tags": [
+    "bootscreen"
+  ],
+  "area": [
+    {
+      "xpos": 244,
+      "ypos": 161,
+      "width": 188,
+      "height": 39,
+      "type": "match"
+    }
+  ],
+  "properties": []
+}
