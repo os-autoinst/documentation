@@ -1,11 +1,11 @@
-openQA image:https://api.travis-ci.org/os-autoinst/documentation.svg[link=https://travis-ci.org/os-autoinst/documentation]
-===================================================================================================================
+openQA additional information
+=============================
 
-If information about openQA is what you seek, come no further as this is the
-place you were looking for.
-
-Here we collect https://github.com/os-autoinst/openQA[openQA], https://github.com/os-autoinst/os-autoinst[os-autoinst] and related documentation, tips and
-presentations.
+Find the official documentation on http://open.qa/docs/. This
+repository provides additional documentation and tips and tricks
+for https://github.com/os-autoinst/openQA[openQA] and
+https://github.com/os-autoinst/os-autoinst[os-autoinst] and
+related projects.
 
 If you have a documentation document, e.g. a presentation or workshop notes,
 feel free to send a pull request.
